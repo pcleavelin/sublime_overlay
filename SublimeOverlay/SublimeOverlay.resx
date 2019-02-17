@@ -117,17 +117,4 @@
   <resheader name="writer">
     <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
   </resheader>
-  <assembly alias="System.Windows.Forms" name="System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089" />
-  <data name="window_close" type="System.Resources.ResXFileRef, System.Windows.Forms">
-    <value>..\Resources\window-close.wmf;System.Byte[], mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
-  </data>
-  <data name="window_maximize" type="System.Resources.ResXFileRef, System.Windows.Forms">
-    <value>..\Resources\window-maximize.wmf;System.Byte[], mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
-  </data>
-  <data name="window_minimize" type="System.Resources.ResXFileRef, System.Windows.Forms">
-    <value>..\Resources\window-minimize.wmf;System.Byte[], mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
-  </data>
-  <data name="window_minimize1" type="System.Resources.ResXFileRef, System.Windows.Forms">
-    <value>..\Resources\window-minimize.emf;System.Byte[], mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
-  </data>
 </root>
