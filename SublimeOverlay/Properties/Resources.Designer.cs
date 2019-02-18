@@ -89,15 +89,5 @@ namespace SublimeOverlay.Properties {
                 return ((byte[])(obj));
             }
         }
-        
-        /// <summary>
-        ///   Looks up a localized resource of type System.Byte[].
-        /// </summary>
-        public static byte[] window_minimize1 {
-            get {
-                object obj = ResourceManager.GetObject("window_minimize1", resourceCulture);
-                return ((byte[])(obj));
-            }
-        }
     }
 }

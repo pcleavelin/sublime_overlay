@@ -127,7 +127,4 @@
   <data name="window_minimize" type="System.Resources.ResXFileRef, System.Windows.Forms">
     <value>..\Resources\window-minimize.wmf;System.Byte[], mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
   </data>
-  <data name="window_minimize1" type="System.Resources.ResXFileRef, System.Windows.Forms">
-    <value>..\Resources\window-minimize.emf;System.Byte[], mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
-  </data>
 </root>
