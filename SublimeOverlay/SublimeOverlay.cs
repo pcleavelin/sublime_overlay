@@ -15,6 +15,12 @@ using System.Windows.Forms;
 
 namespace SublimeOverlay
 {
+    public struct Handle_Data
+    {
+        public ulong process_id;
+        public IntPtr window_handle;
+    }
+
     public partial class SublimeOverlay : Form
     {
         [DllImport("user32.dll")]
@@ -30,12 +36,19 @@ namespace SublimeOverlay
         [DllImport("user32.dll")]
         public static extern bool ShowWindow(IntPtr hWndChild, int nCmdShow);
 
-        public static int GWL_STYLE = -16;
-        public static int WS_CHILD = 0x40000000;
-        public static int WS_DLGFRAME = 0x00400000;
-        public static int WS_THICKFRAME = 0x00040000;
-        public static int WS_BORDER = 0x0000000;
-        public static int WS_CAPTION = 0x00C00000;
+        [DllImport("user32.dll")]
+        public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+        [DllImport("user32.dll")]
+        public static extern int GetWindowThreadProcessId(IntPtr hWnd, ref IntPtr lpdwProcessId);
+
+        public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lpdwParam);
+
+        private static int GWL_STYLE = -16;
+        private static int WS_CHILD = 0x40000000;
+        private static int WS_DLGFRAME = 0x00400000;
+        private static int WS_THICKFRAME = 0x00040000;
+        private static int WS_BORDER = 0x0000000;
+        private static int WS_CAPTION = 0x00C00000;
 
         private const int HTLEFT = 10;
         private const int HTRIGHT = 11;
@@ -46,7 +59,7 @@ namespace SublimeOverlay
         private const int HTBOTTOMLEFT = 16;
         private const int HTBOTTOMRIGHT = 17;
 
-        public static int SW_SHOW = 5;
+        private static int SW_SHOW = 5;
 
         Panel titleBarPanel;
         Panel sublimePanel;
@@ -59,19 +72,14 @@ namespace SublimeOverlay
         Metafile maximizePicture;
         Metafile closePicture;
 
-        Color titleBarColor;
-        Color minimizeColor;
-        Color maximizeColor;
-        Color closeColor;
-
         Point grabLocation;
-
-        bool isDragging;
 
         Process sublimeProc;
         IntPtr sublimeHandle;
 
-        const int grabSpacing = 4; // you can rename this variable if you like
+        bool isDragging;
+
+        const int grabSpacing = 8; // you can rename this variable if you like
 
         Rectangle GrabTop { get { return new Rectangle(0, 0, this.ClientSize.Width, grabSpacing); } }
         Rectangle GrabLeft { get { return new Rectangle(0, 0, grabSpacing, this.ClientSize.Height); } }
@@ -83,16 +91,16 @@ namespace SublimeOverlay
         Rectangle GrabBottomLeft { get { return new Rectangle(0, this.ClientSize.Height - grabSpacing, grabSpacing, grabSpacing); } }
         Rectangle GrabBottomRight { get { return new Rectangle(this.ClientSize.Width - grabSpacing, this.ClientSize.Height - grabSpacing, grabSpacing, grabSpacing); } }
 
-        string SublimeExePath = "";
+        SublimeOverlayConfiguration configuration;
 
         public SublimeOverlay()
         {
             InitializeComponent();
-            
+
             this.FormBorderStyle = FormBorderStyle.None;
             this.SetStyle(ControlStyles.ResizeRedraw, true);
 
-            // TODO: load config file
+            this.configuration = SublimeOverlayConfiguration.Load();
 
             InitializeTitleBarControls();
         }
@@ -127,6 +135,11 @@ namespace SublimeOverlay
             this.ResizeControls(this.Width, this.Height);
         }
 
+        /// <summary>
+        /// Resizes the title bar and its controls
+        /// </summary>
+        /// <param name="width"></param>
+        /// <param name="height"></param>
         private void ResizeControls(int width, int height)
         {
             if (this.titleBarPanel != null && this.sublimePanel != null)
@@ -151,14 +164,11 @@ namespace SublimeOverlay
             }
         }
 
+        /// <summary>
+        /// Initializes the titlebar and all of its controls
+        /// </summary>
         private void InitializeTitleBarControls()
         {
-            // TODO: Load configuration file for colors
-            this.titleBarColor = Color.FromArgb(38, 50, 56);
-            this.minimizeColor = Color.White;
-            this.maximizeColor = Color.White;
-            this.closeColor = Color.White;
-
             this.isDragging = false;
             this.grabLocation = this.Location;
 
@@ -173,7 +183,7 @@ namespace SublimeOverlay
 
             // Create custom title bar
             this.titleBarPanel = new Panel();
-            this.titleBarPanel.BackColor = this.titleBarColor;
+            this.titleBarPanel.BackColor = this.configuration.TitleBarColor;
             this.titleBarPanel.Location = new Point(this.Location.X + grabSpacing, this.Location.Y + grabSpacing);
             this.titleBarPanel.Name = "titleBarPanel";
             this.titleBarPanel.Width = this.Width - grabSpacing * 2;
@@ -184,7 +194,7 @@ namespace SublimeOverlay
 
             // Create panel to place sublime window
             this.sublimePanel = new Panel();
-            this.sublimePanel.Location = new Point(grabSpacing, titleBarSize);
+            this.sublimePanel.Location = new Point(grabSpacing, this.titleBarPanel.Location.Y + this.titleBarPanel.Height);
             this.sublimePanel.Width = this.Width - grabSpacing * 2;
             this.sublimePanel.Height = this.Height - titleBarSize - grabSpacing;
 
@@ -232,34 +242,56 @@ namespace SublimeOverlay
             this.maximizeControl.BringToFront();
             this.closeControl.BringToFront();
 
-            this.BackColor = this.titleBarColor;
+            this.BackColor = this.configuration.TitleBarColor;
         }
 
+        /// <summary>
+        /// Called when the form loads
+        /// </summary>
+        /// <param name="sender">The form</param>
+        /// <param name="e">The event args</param>
         private void SublimeOverlay_Load(object sender, EventArgs e)
         {
             this.CaptureSublimeWindow();
         }
 
+        /// <summary>
+        /// Captures the sublime window and makes us the its parent
+        /// </summary>
+        /// <returns>Whether the parenting succeeded or not</returns>
         private bool CaptureSublimeWindow()
         {
-            this.sublimeProc = Process.Start(this.SublimeExePath);
-            
-            var captureTask = new Task(() =>
-            {
-                Thread.Sleep(500);
+            // First check for existing sublime window
 
-                if (sublimeProc != null && !sublimeProc.HasExited)
+            if (string.IsNullOrEmpty(this.configuration.SublimeExePath)
+                || !File.Exists(this.configuration.SublimeExePath))
+            {
+                return false;
+            }
+
+            this.sublimeProc = Process.Start(this.configuration.SublimeExePath);
+
+            do
+            {
+                if (!sublimeProc.HasExited)
                 {
                     this.sublimeHandle = sublimeProc.MainWindowHandle;
                 }
-            });
+                else if (sublimeProc.ExitCode == 0)
+                {
+                    this.sublimeProc = Process.GetProcessesByName("sublime_text").FirstOrDefault();
 
-            captureTask.Start();
-            captureTask.Wait();
+                    if (sublimeProc != null)
+                    {
+                        this.sublimeHandle = GetHiddenSublimeHandle((long)this.sublimeProc.Id);
+                    }
+                }
+           } while (this.sublimeHandle == IntPtr.Zero);
 
             if (this.sublimeHandle == IntPtr.Zero)
             {
                 MessageBox.Show("Failed to capture Sublime window!");
+                return false;
             }
             else
             {
@@ -279,9 +311,37 @@ namespace SublimeOverlay
             return true;
         }
 
+        /// <summary>
+        /// Gets a handle for a hidden sublime window
+        /// </summary>
+        /// <param name="processId">The process id for a sublime text process</param>
+        /// <returns>hWnd of the window</returns>
+        private IntPtr GetHiddenSublimeHandle(long processId)
+        {
+            IntPtr sublimeHWnd = IntPtr.Zero;
+            var result = EnumWindows(delegate(IntPtr hWnd, IntPtr param) 
+            {
+                IntPtr id = new IntPtr(0);
+                GetWindowThreadProcessId(hWnd, ref id);
+
+                if(id.ToInt64() == processId)
+                {
+                    sublimeHWnd = hWnd;
+                    return false;
+                }
+
+                return true;
+            }, IntPtr.Zero);
+
+            return sublimeHWnd;
+        }
+
+        /// <summary>
+        /// Closes all windows
+        /// </summary>
         private void CloseWindow()
         {
-            if(this.sublimeHandle != null)
+            if(this.sublimeHandle != IntPtr.Zero)
             {
                 this.sublimeHandle = IntPtr.Zero;
                 this.sublimeProc.CloseMainWindow();
@@ -290,6 +350,9 @@ namespace SublimeOverlay
             this.Close();
         }
 
+        /// <summary>
+        /// Maxmizes the window
+        /// </summary>
         private void MaximizeWindow()
         {
             if (this.WindowState == FormWindowState.Maximized)
@@ -302,11 +365,19 @@ namespace SublimeOverlay
             }
         }
 
+        /// <summary>
+        /// Minimizes the window
+        /// </summary>
         private void MinimizeWindow()
         {
             this.WindowState = FormWindowState.Minimized;
         }
 
+        /// <summary>
+        /// Called when the close control has a mouse up event
+        /// </summary>
+        /// <param name="sender">The CloseControl</param>
+        /// <param name="e">The event args</param>
         private void CloseControl_MouseUp(object sender, MouseEventArgs e)
         {
             PictureBox pict = (PictureBox)sender;
@@ -319,6 +390,11 @@ namespace SublimeOverlay
             }
         }
 
+        /// <summary>
+        /// Called when the maximize control has a mouse up event
+        /// </summary>
+        /// <param name="sender">The MaximizeControl</param>
+        /// <param name="e">The event args</param>
         private void MaximizeControl_MouseUp(object sender, MouseEventArgs e)
         {
             PictureBox pict = (PictureBox)sender;
@@ -331,6 +407,11 @@ namespace SublimeOverlay
             }
         }
 
+        /// <summary>
+        /// Called when the minimize control has a mouse up event
+        /// </summary>
+        /// <param name="sender">The MinimizeControl</param>
+        /// <param name="e">The event args</param>
         private void MinimizeControl_MouseUp(object sender, MouseEventArgs e)
         {
             PictureBox pict = (PictureBox)sender;
@@ -343,6 +424,50 @@ namespace SublimeOverlay
             }
         }
 
+        /// <summary>
+        /// Called when the title bar has a mouse up event
+        /// </summary>
+        /// <param name="sender">The Title Bar</param>
+        /// <param name="e">The event args</param>
+        private void TitleBar_MouseUp(object sender, MouseEventArgs e)
+        {
+            this.isDragging = false;
+        }
+
+        /// <summary>
+        /// Called when the title bar has a mouse down event
+        /// </summary>
+        /// <param name="sender">The Title Bar</param>
+        /// <param name="e">The event args</param>
+        private void TitleBar_MouseDown(object sender, MouseEventArgs e)
+        {
+            if (!this.isDragging)
+            {
+                this.isDragging = true;
+                this.grabLocation = e.Location;
+            }
+        }
+
+        /// <summary>
+        /// Called when the title bar has a mouse move event
+        /// </summary>
+        /// <param name="sender">The Title Bar</param>
+        /// <param name="e">The event args</param>
+        private void TitleBarPanel_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (this.isDragging)
+            {
+                this.DesktopLocation = new Point(this.DesktopLocation.X + e.Location.X - this.grabLocation.X, this.DesktopLocation.Y + e.Location.Y - this.grabLocation.Y);
+            }
+        }
+
+        /// <summary>
+        /// Given an image, draws it with custom colors
+        /// </summary>
+        /// <param name="graphics">The <see cref="System.Drawing.Graphics"/></param>
+        /// <param name="image">The <see cref="System.Drawing.Image"/> to draw</param>
+        /// <param name="color">The custom <see cref="System.Drawing.Color"/></param>
+        /// <param name="controlSize">The control's <see cref="System.Drawing.Size"/></param>
         private void PaintTitleBarControl(Graphics graphics, Image image, Color color, Size controlSize)
         {
             var r = ((float)color.R) / 255.0f;
@@ -364,41 +489,34 @@ namespace SublimeOverlay
             graphics.DrawImage(image, rect, 0, 0, image.Width, image.Height, GraphicsUnit.Pixel, attr);
         }
 
+        /// <summary>
+        /// Called when the close control has a paint event
+        /// </summary>
+        /// <param name="sender">The CloseControl</param>
+        /// <param name="e">The event args</param>
         private void CloseControl_Paint(object sender, PaintEventArgs e)
         {
-            this.PaintTitleBarControl(e.Graphics, this.closePicture, this.closeColor, this.closeControl.ClientSize);
+            this.PaintTitleBarControl(e.Graphics, this.closePicture, this.configuration.CloseControlColor, this.closeControl.ClientSize);
         }
 
+        /// <summary>
+        /// Called when the maximize control has a paint event
+        /// </summary>
+        /// <param name="sender">The MaximizeControl</param>
+        /// <param name="e">The event args</param>
         private void MaximizeControl_Paint(object sender, PaintEventArgs e)
         {
-            this.PaintTitleBarControl(e.Graphics, this.maximizePicture, this.maximizeColor, this.maximizeControl.ClientSize);
+            this.PaintTitleBarControl(e.Graphics, this.maximizePicture, this.configuration.MaximizeControlColor, this.maximizeControl.ClientSize);
         }
 
+        /// <summary>
+        /// Called when the minimize control has a paint event
+        /// </summary>
+        /// <param name="sender">The MinimizeControl</param>
+        /// <param name="e">The event args</param>
         private void MinimizeControl_Paint(object sender, PaintEventArgs e)
         {
-            this.PaintTitleBarControl(e.Graphics, this.minimizePicture, this.minimizeColor, this.minimizeControl.ClientSize);
-        }
-
-        private void TitleBar_MouseUp(object sender, MouseEventArgs e)
-        {
-            this.isDragging = false;
-        }
-
-        private void TitleBar_MouseDown(object sender, MouseEventArgs e)
-        {
-            if (!this.isDragging)
-            {
-                this.isDragging = true;
-                this.grabLocation = e.Location;
-            }
-        }
-
-        private void TitleBarPanel_MouseMove(object sender, MouseEventArgs e)
-        {
-            if (this.isDragging)
-            {
-                this.DesktopLocation = new Point(this.DesktopLocation.X + e.Location.X - this.grabLocation.X, this.DesktopLocation.Y + e.Location.Y - this.grabLocation.Y);
-            }
+            this.PaintTitleBarControl(e.Graphics, this.minimizePicture, this.configuration.MinimizeControlColor, this.minimizeControl.ClientSize);
         }
     }
 }
